@@ -42,8 +42,8 @@ function saveWalletToFile(walletInfo) {
                    `时间: ${timestamp}\n` +
                    `地址: ${walletInfo.address}\n` +
                    `私钥: ${walletInfo.privateKey}\n` +
-                   `转入交易哈希: ${walletInfo.fundTxHash}\n` +
-                   `发送交易哈希: ${walletInfo.txHash}\n` +
+                   `转入交易哈希: ${walletInfo.fundTxHash || '未完成'}\n` +
+                   `发送交易哈希: ${walletInfo.txHash || '未完成'}\n` +
                    `------------------------\n\n`;
     
     fs.appendFileSync('wallets.txt', content);
@@ -110,6 +110,10 @@ async function main() {
             rl.question('请输入要生成的钱包数量: ', resolve);
         });
 
+        const ethAmount = await new Promise(resolve => {
+            rl.question('请输入每个钱包要发送的 ETH 数量 (例如: 0.000001): ', resolve);
+        });
+
         // 创建源钱包
         const sourceWallet = new ethers.Wallet(sourceWalletPrivateKey, provider);
         console.log(`源钱包地址: ${sourceWallet.address}`);
@@ -126,26 +130,36 @@ async function main() {
             // 连接到provider
             const connectedNewWallet = newWallet.connect(provider);
             
-            // 发送0.000001 ETH到新钱包
-            const fundTx = await sendETHToWallet(sourceWallet, newWallet.address, '0.000001');
-            
-            // 等待交易确认
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            // 发送0 ETH交易
-            const zeroTx = await sendZeroTransaction(connectedNewWallet);
-            
-            // 保存钱包信息到文件
-            saveWalletToFile({
+            // 保存钱包基本信息，确保即使后续操作失败也能保存私钥
+            const walletInfo = {
                 index: i,
                 address: newWallet.address,
                 privateKey: newWallet.privateKey,
-                fundTxHash: fundTx.hash,
-                txHash: zeroTx.hash
-            });
+                fundTxHash: null,
+                txHash: null
+            };
             
-            // 等待交易确认
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            try {
+                // 发送用户指定数量的 ETH 到新钱包
+                const fundTx = await sendETHToWallet(sourceWallet, newWallet.address, ethAmount);
+                walletInfo.fundTxHash = fundTx.hash;
+                
+                // 等待交易确认
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                // 发送0 ETH交易
+                const zeroTx = await sendZeroTransaction(connectedNewWallet);
+                walletInfo.txHash = zeroTx.hash;
+                
+                // 等待交易确认
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } catch (error) {
+                console.error(`处理钱包 ${i + 1} 时出错: ${error.message}`);
+                console.log(`继续处理下一个钱包...`);
+            } finally {
+                // 无论成功与否，都保存钱包信息
+                saveWalletToFile(walletInfo);
+            }
         }
         
         console.log('\n所有操作完成!');
